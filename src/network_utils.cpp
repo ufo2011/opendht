@@ -1,20 +1,5 @@
-/*
- *  Copyright (C) 2014-2022 Savoir-faire Linux Inc.
- *  Author(s) : Adrien Béraud <adrien.beraud@savoirfairelinux.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
+// Copyright (c) 2014-2026 Savoir-faire Linux Inc.
+// SPDX-License-Identifier: MIT
 
 #include "network_utils.h"
 
@@ -23,12 +8,17 @@
 #include <io.h>
 #include <string>
 #include <cstring>
-#define close(x) closesocket(x)
-#define write(s, b, f) send(s, b, (int)strlen(b), 0)
+#define close(x)                  closesocket(x)
+#define write(s, b, f)            send(s, b, (int) strlen(b), 0)
+#define _poll(fds, nfds, timeout) WSAPoll(fds, nfds, timeout)
 #else
-#include <sys/select.h>
 #include <fcntl.h>
+#include <poll.h>
+#define _poll(fds, nfds, timeout) poll(fds, nfds, timeout)
 #endif
+
+// number of file descriptors to poll in openSockets()
+#define NUM_FDS 3
 
 #include <iostream>
 
@@ -44,10 +34,10 @@ bindSocket(const SockAddr& addr, SockAddr& bound)
         throw DhtException(std::string("Can't open socket: ") + strerror(sock));
     int set = 1;
 #ifdef SO_NOSIGPIPE
-    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, (const char*)&set, sizeof(set));
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, (const char*) &set, sizeof(set));
 #endif
     if (is_ipv6)
-        setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&set, sizeof(set));
+        setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*) &set, sizeof(set));
     net::setNonblocking(sock);
     int rc = bind(sock, addr.get(), addr.getLength());
     if (rc < 0) {
@@ -57,7 +47,7 @@ bindSocket(const SockAddr& addr, SockAddr& bound)
     }
     sockaddr_storage ss;
     socklen_t ss_len = sizeof(ss);
-    getsockname(sock, (sockaddr*)&ss, &ss_len);
+    getsockname(sock, (sockaddr*) &ss, &ss_len);
     bound = {ss, ss_len};
     return sock;
 }
@@ -79,7 +69,8 @@ setNonblocking(int fd, bool nonblocking)
 }
 
 #ifdef _WIN32
-void udpPipe(int fds[2])
+void
+udpPipe(int fds[2])
 {
     int lst = socket(AF_INET, SOCK_DGRAM, 0);
     if (lst < 0)
@@ -92,11 +83,12 @@ void udpPipe(int fds[2])
     inaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     inaddr.sin_port = 0;
     int yes = 1;
-    setsockopt(lst, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, sizeof(yes));
-    int rc = bind(lst, (sockaddr*)&inaddr, sizeof(inaddr));
+    setsockopt(lst, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes));
+    int rc = bind(lst, (sockaddr*) &inaddr, sizeof(inaddr));
     if (rc < 0) {
         close(lst);
-        throw DhtException("Can't bind socket on " + print_addr((sockaddr*)&inaddr, sizeof(inaddr)) + " " + strerror(rc));
+        throw DhtException("Can't bind socket on " + print_addr((sockaddr*) &inaddr, sizeof(inaddr)) + " "
+                           + strerror(rc));
     }
     socklen_t len = sizeof(addr);
     getsockname(lst, &addr, &len);
@@ -106,39 +98,50 @@ void udpPipe(int fds[2])
 }
 #endif
 
-UdpSocket::UdpSocket(in_port_t port, const std::shared_ptr<Logger>& l) : logger(l) {
+UdpSocket::UdpSocket(in_port_t port, const std::shared_ptr<Logger>& l)
+    : logger(l)
+{
     SockAddr bind4;
     bind4.setFamily(AF_INET);
     bind4.setPort(port);
     SockAddr bind6;
     bind6.setFamily(AF_INET6);
     bind6.setPort(port);
-    std::lock_guard<std::mutex> lk(lock);
+    std::lock_guard lk(lock);
     openSockets(bind4, bind6);
 }
 
-UdpSocket::UdpSocket(const SockAddr& bind4, const SockAddr& bind6, const std::shared_ptr<Logger>& l) : logger(l)
+UdpSocket::UdpSocket(const SockAddr& bind4, const SockAddr& bind6, const std::shared_ptr<Logger>& l)
+    : logger(l)
 {
-    std::lock_guard<std::mutex> lk(lock);
+    std::lock_guard lk(lock);
     openSockets(bind4, bind6);
 }
 
-UdpSocket::~UdpSocket() {
+UdpSocket::~UdpSocket()
+{
     stop();
     if (rcv_thread.joinable())
         rcv_thread.join();
 }
 
 int
-UdpSocket::sendTo(const SockAddr& dest, const uint8_t* data, size_t size, bool replied) {
+UdpSocket::sendTo(const SockAddr& dest, const uint8_t* data, size_t size, [[maybe_unused]] bool replied)
+{
     if (not dest)
         return EFAULT;
 
     int s;
     switch (dest.getFamily()) {
-    case AF_INET:  s = s4; break;
-    case AF_INET6: s = s6; break;
-    default:       s = -1; break;
+    case AF_INET:
+        s = s4;
+        break;
+    case AF_INET6:
+        s = s6;
+        break;
+    default:
+        s = -1;
+        break;
     }
 
     if (s < 0)
@@ -153,12 +156,12 @@ UdpSocket::sendTo(const SockAddr& dest, const uint8_t* data, size_t size, bool r
     flags |= MSG_NOSIGNAL;
 #endif
 
-    if (sendto(s, (const char*)data, size, flags, dest.get(), dest.getLength()) == -1) {
+    if (sendto(s, (const char*) data, size, flags, dest.get(), dest.getLength()) == -1) {
         int err = errno;
         if (logger)
             logger->d("Can't send message to %s: %s", dest.toString().c_str(), strerror(err));
         if (err == EPIPE || err == ENOTCONN || err == ECONNRESET) {
-            std::lock_guard<std::mutex> lk(lock);
+            std::lock_guard lk(lock);
             auto bind4 = std::move(bound4), bind6 = std::move(bound6);
             openSockets(bind4, bind6);
             return sendTo(dest, data, size, false);
@@ -232,24 +235,24 @@ UdpSocket::openSockets(const SockAddr& bind4, const SockAddr& bind6)
     }
 
     running = true;
-    rcv_thread = std::thread([this, stop_readfd, ls4=s4, ls6=s6]() mutable {
-        int selectFd = std::max({ls4, ls6, stop_readfd}) + 1;
+    rcv_thread = std::thread([this, stop_readfd, ls4 = s4, ls6 = s6]() mutable {
+        struct pollfd fds[NUM_FDS];
+        for (int i = 0; i < NUM_FDS; i++)
+            fds[i].events = POLLIN;
+        constexpr size_t stop_readfd_index = 0, ls4_index = 1, ls6_index = 2;
         try {
             while (running) {
-                fd_set readfds;
+                // ls4 and ls6 can be negative, but this doesn't require any special handling
+                // because poll() will simply ignore them (and set revents to 0) in that case
+                fds[stop_readfd_index].fd = stop_readfd;
+                fds[ls4_index].fd = ls4;
+                fds[ls6_index].fd = ls6;
 
-                FD_ZERO(&readfds);
-                FD_SET(stop_readfd, &readfds);
-                if(ls4 >= 0)
-                    FD_SET(ls4, &readfds);
-                if(ls6 >= 0)
-                    FD_SET(ls6, &readfds);
-
-                int rc = select(selectFd, &readfds, nullptr, nullptr, nullptr);
+                int rc = _poll(fds, NUM_FDS, -1);
                 if (rc < 0) {
                     if (errno != EINTR) {
                         if (logger)
-                            logger->e("Select error: %s", strerror(errno));
+                            logger->e("Poll error: %s", strerror(errno));
                         std::this_thread::sleep_for(std::chrono::seconds(1));
                     }
                 }
@@ -262,36 +265,37 @@ UdpSocket::openSockets(const SockAddr& bind4, const SockAddr& bind6)
                     sockaddr_storage from;
                     socklen_t from_len = sizeof(from);
 
-                    if (FD_ISSET(stop_readfd, &readfds)) {
-                        if (recv(stop_readfd, (char*)buf.data(), buf.size(), 0) < 0) {
+                    if (fds[stop_readfd_index].revents & POLLIN) {
+                        if (recv(stop_readfd, (char*) buf.data(), buf.size(), 0) < 0) {
                             if (logger)
                                 logger->e("Got stop packet error: %s", strerror(errno));
                             break;
                         }
-                    }
-                    else if (ls4 >= 0 && FD_ISSET(ls4, &readfds))
-                        rc = recvfrom(ls4, (char*)buf.data(), buf.size(), 0, (sockaddr*)&from, &from_len);
-                    else if (ls6 >= 0 && FD_ISSET(ls6, &readfds))
-                        rc = recvfrom(ls6, (char*)buf.data(), buf.size(), 0, (sockaddr*)&from, &from_len);
+                    } else if (fds[ls4_index].revents & POLLIN)
+                        rc = recvfrom(ls4, (char*) buf.data(), buf.size(), 0, (sockaddr*) &from, &from_len);
+                    else if (fds[ls6_index].revents & POLLIN)
+                        rc = recvfrom(ls6, (char*) buf.data(), buf.size(), 0, (sockaddr*) &from, &from_len);
                     else
                         continue;
 
                     if (rc > 0) {
                         auto pkts = getNewPacket();
                         auto& pkt = pkts.front();
-                        pkt.data.insert(pkt.data.end(), buf.begin(), buf.begin()+rc);
+                        pkt.data.insert(pkt.data.end(), buf.begin(), buf.begin() + rc);
                         pkt.from = {from, from_len};
                         pkt.received = clock::now();
                         onReceived(std::move(pkts));
                     } else if (rc == -1) {
-                        if (logger)
-                            logger->e("Error receiving packet: %s", strerror(errno));
                         int err = errno;
+                        if (logger)
+                            logger->e("Error receiving packet: %s", strerror(err));
                         if (err == EPIPE || err == ENOTCONN || err == ECONNRESET) {
-                            if (not running) break;
-                            std::unique_lock<std::mutex> lk(lock, std::try_to_lock);
+                            if (not running)
+                                break;
+                            std::unique_lock lk(lock, std::try_to_lock);
                             if (lk.owns_lock()) {
-                                if (not running) break;
+                                if (not running)
+                                    break;
                                 if (ls4 >= 0) {
                                     close(ls4);
                                     try {
@@ -314,7 +318,6 @@ UdpSocket::openSockets(const SockAddr& bind4, const SockAddr& bind6)
                                     break;
                                 s4 = ls4;
                                 s6 = ls6;
-                                selectFd = std::max({ls4, ls6, stop_readfd}) + 1;
                             } else {
                                 break;
                             }
@@ -334,7 +337,7 @@ UdpSocket::openSockets(const SockAddr& bind4, const SockAddr& bind6)
             close(stop_readfd);
         if (stopfd != -1)
             close(stopfd);
-        std::unique_lock<std::mutex> lk(lock, std::try_to_lock);
+        std::unique_lock lk(lock, std::try_to_lock);
         if (lk.owns_lock()) {
             s4 = -1;
             s6 = -1;
@@ -357,5 +360,5 @@ UdpSocket::stop()
     }
 }
 
-}
-}
+} // namespace net
+} // namespace dht

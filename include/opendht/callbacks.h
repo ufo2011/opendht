@@ -1,23 +1,5 @@
-/*
- *  Copyright (C) 2014-2022 Savoir-faire Linux Inc.
- *  Authors: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
- *           Simon Désaulniers <simon.desaulniers@savoirfairelinux.com>
- *           Sébastien Blin <sebastien.blin@savoirfairelinux.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
-
+// Copyright (c) 2014-2026 Savoir-faire Linux Inc.
+// SPDX-License-Identifier: MIT
 #pragma once
 
 #include "infohash.h"
@@ -41,22 +23,20 @@ struct Node;
  */
 enum class NodeStatus {
     Disconnected, // 0 nodes
-    Connecting,   // 1+ nodes
+    Connecting,   // bootstrap pending or 1+ nodes
     Connected     // 1+ good nodes
 };
 
-inline constexpr const char*
-statusToStr(NodeStatus status) {
-    return status == NodeStatus::Connected  ? "connected"  : (
-           status == NodeStatus::Connecting ? "connecting" :
-                                              "disconnected");
+inline constexpr std::string_view
+statusToStr(NodeStatus status)
+{
+    return status == NodeStatus::Connected ? "connected"sv
+                                           : (status == NodeStatus::Connecting ? "connecting"sv : "disconnected"sv);
 }
 
-struct OPENDHT_PUBLIC NodeStats {
-    unsigned good_nodes {0},
-             dubious_nodes {0},
-             cached_nodes {0},
-             incoming_nodes {0};
+struct OPENDHT_PUBLIC NodeStats
+{
+    unsigned good_nodes {0}, dubious_nodes {0}, cached_nodes {0}, incoming_nodes {0};
     unsigned table_depth {0};
     unsigned searches {0};
     unsigned node_cache_size {0};
@@ -76,12 +56,17 @@ struct OPENDHT_PUBLIC NodeStats {
     MSGPACK_DEFINE_MAP(good_nodes, dubious_nodes, cached_nodes, incoming_nodes, table_depth, searches, node_cache_size)
 };
 
-struct OPENDHT_PUBLIC NodeInfo {
+struct OPENDHT_PUBLIC NodeInfo
+{
     InfoHash id;
     InfoHash node_id;
     NodeStats ipv4 {};
     NodeStats ipv6 {};
     size_t ongoing_ops {0};
+    size_t storage_values {0};
+    size_t storage_size {0};
+    size_t local_storage_values {0};
+    size_t local_storage_size {0};
     in_port_t bound4 {0};
     in_port_t bound6 {0};
 
@@ -94,13 +79,24 @@ struct OPENDHT_PUBLIC NodeInfo {
     explicit NodeInfo(const Json::Value& v);
 #endif
 
-    MSGPACK_DEFINE_MAP(id, node_id, ipv4, ipv6)
+    MSGPACK_DEFINE_MAP(id,
+                       node_id,
+                       ipv4,
+                       ipv6,
+                       ongoing_ops,
+                       storage_values,
+                       storage_size,
+                       local_storage_values,
+                       local_storage_size,
+                       bound4,
+                       bound6)
 };
 
 /**
  * Dht configuration.
  */
-struct OPENDHT_PUBLIC Config {
+struct OPENDHT_PUBLIC Config
+{
     /** DHT node ID */
     InfoHash node_id {};
 
@@ -129,8 +125,14 @@ struct OPENDHT_PUBLIC Config {
     /* If non-0, overrides the default maximum number of searches. -1 means no limit.  */
     ssize_t max_searches {0};
 
-    /* If non-0, overrides the default maximum store size. -1 means no limit.  */
+    /* If non-0, overrides the default maximum store size for remote values. -1 means no limit.  */
     ssize_t max_store_size {0};
+
+    /* If non-0, overrides the default maximum store size for locally stored values. -1 means no limit.  */
+    ssize_t max_local_store_size {0};
+
+    /* If non-0, overrides the default maximum store key count. -1 means no limit.  */
+    ssize_t max_store_keys {0};
 
     /**
      * Use appropriate bahavior for a public IP, stable node:
@@ -138,6 +140,9 @@ struct OPENDHT_PUBLIC Config {
      *   - Larger listen refresh time
      */
     bool public_stable {false};
+
+    /* Client mode, node will not be used by other nodes to store data. */
+    bool client_mode {false};
 };
 
 /**
@@ -155,7 +160,22 @@ struct OPENDHT_PUBLIC SecureDhtConfig
     bool cert_cache_all {false};
 };
 
-static constexpr size_t DEFAULT_STORAGE_LIMIT {1024 * 1024 * 64};
+enum class OPENDHT_PUBLIC PushNotificationResult : uint8_t {
+    /* success codes */
+    PutRefresh,
+    ListenRefresh,
+    Values,
+    ValuesExpired,
+    /* ignored/error codes */
+    IgnoredWrongSession = 0x80,
+    IgnoredNoOp,
+    IgnoredStopped,
+    IgnoredDisabled,
+    Error
+};
+
+static constexpr size_t STORAGE_LIMIT_DEFAULT {1024 * 1024 * 64};
+static constexpr size_t STORAGE_LIMIT_UNLIMITED {(size_t) -1};
 
 using ValuesExport = std::pair<InfoHash, Blob>;
 
@@ -165,19 +185,19 @@ using ValueCallback = std::function<bool(const std::vector<std::shared_ptr<Value
 using GetCallbackSimple = std::function<bool(std::shared_ptr<Value> value)>;
 using ShutdownCallback = std::function<void()>;
 using IdentityAnnouncedCb = std::function<void(bool)>;
+using PublicAddressChangedCb = std::function<void(std::vector<SockAddr>)>;
 
-using CertificateStoreQuery = std::function<std::vector<std::shared_ptr<crypto::Certificate>>(const InfoHash& pk_id)>;
-
-typedef bool (*GetCallbackRaw)(std::shared_ptr<Value>, void *user_data);
-typedef bool (*ValueCallbackRaw)(std::shared_ptr<Value>, bool expired, void *user_data);
+using CertificateStoreQuery = std::function<std::vector<std::shared_ptr<crypto::Certificate>>(const PkId& pk_id)>;
 
 using DoneCallback = std::function<void(bool success, const std::vector<std::shared_ptr<Node>>& nodes)>;
-typedef void (*DoneCallbackRaw)(bool, std::vector<std::shared_ptr<Node>>*, void *user_data);
-typedef void (*ShutdownCallbackRaw)(void *user_data);
-typedef void (*DoneCallbackSimpleRaw)(bool, void *user_data);
-typedef bool (*FilterRaw)(const Value&, void *user_data);
-
 using DoneCallbackSimple = std::function<void(bool success)>;
+
+typedef bool (*GetCallbackRaw)(std::shared_ptr<Value>, void* user_data);
+typedef bool (*ValueCallbackRaw)(std::shared_ptr<Value>, bool expired, void* user_data);
+typedef void (*DoneCallbackRaw)(bool, std::vector<std::shared_ptr<Node>>*, void* user_data);
+typedef void (*ShutdownCallbackRaw)(void* user_data);
+typedef void (*DoneCallbackSimpleRaw)(bool, void* user_data);
+typedef bool (*FilterRaw)(const Value&, void* user_data);
 
 OPENDHT_PUBLIC GetCallbackSimple bindGetCb(GetCallbackRaw raw_cb, void* user_data);
 OPENDHT_PUBLIC GetCallback bindGetCb(GetCallbackSimple cb);
@@ -188,4 +208,4 @@ OPENDHT_PUBLIC DoneCallback bindDoneCb(DoneCallbackRaw raw_cb, void* user_data);
 OPENDHT_PUBLIC DoneCallbackSimple bindDoneCbSimple(DoneCallbackSimpleRaw raw_cb, void* user_data);
 OPENDHT_PUBLIC Value::Filter bindFilterRaw(FilterRaw raw_filter, void* user_data);
 
-}
+} // namespace dht

@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2016-2019 Savoir-faire Linux Inc.
-# Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
-#
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program; If not, see <http://www.gnu.org/licenses/>.
+# Copyright (c) 2014-2026 Savoir-faire Linux Inc.
+# SPDX-License-Identifier: MIT
 
 from twisted.web import server, resource
 from twisted.internet import reactor, endpoints
@@ -72,7 +59,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Launch an OpenDHT node with an HTTP control interface')
     parser.add_argument('-p', '--port', help='OpenDHT port to bind', type=int, default=4222)
     parser.add_argument('-hp', '--http-port', help='HTTP port to bind', type=int, default=8080)
-    parser.add_argument('-b', '--bootstrap', help='bootstrap address', default="bootstrap.ring.cx:4222")
+    parser.add_argument('-b', '--bootstrap', help='bootstrap address', default="bootstrap.jami.net:4222")
     args = parser.parse_args()
     endpoints.serverFromString(reactor, "tcp:"+str(args.http_port)).listen(server.Site(DhtServer(args.port, args.bootstrap)))
     reactor.run()

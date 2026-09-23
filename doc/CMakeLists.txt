@@ -1,5 +1,5 @@
 if (OPENDHT_TOOLS)
-	INSTALL(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dhtnode.1 DESTINATION ${CMAKE_INSTALL_PREFIX}/share/man/man1)
+	INSTALL(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dhtnode.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 endif ()
 
 if (OPENDHT_DOCUMENTATION)
@@ -12,5 +12,5 @@ if (OPENDHT_DOCUMENTATION)
                       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
                       COMMENT "Generating API documentation with Doxygen"
                       VERBATIM)
-    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/html DESTINATION share/doc/opendht)
+    install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/html DESTINATION ${CMAKE_INSTALL_DOCDIR}/opendht)
 endif()

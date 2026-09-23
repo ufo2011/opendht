@@ -1,0 +1,46 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceRoot}/build"
+            },
+            "command": "make",
+            "args": ["-j4"],
+            "dependsOn": "cmake"
+        },
+        {
+            "label": "cmake",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceRoot}/build"
+            },
+            "command": "cmake",
+            "args": [
+                "${workspaceRoot}",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=On",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DBUILD_TESTING=On",
+                "-DOPENDHT_SANITIZE=On",
+                "-DOPENDHT_PROXY_CLIENT=On",
+                "-DOPENDHT_PROXY_SERVER=On",
+                "-DOPENDHT_C=On"
+            ],
+            "dependsOn": "builddir"
+        },
+        {
+            "label": "builddir",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceRoot}"
+            },
+            "command": "mkdir",
+            "args": [
+                "-p",
+                "${workspaceRoot}/build"
+            ]
+        },
+    ]
+}

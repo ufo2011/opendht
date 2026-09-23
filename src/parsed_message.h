@@ -1,79 +1,75 @@
-/*
- *  Copyright (C) 2014-2022 Savoir-faire Linux Inc.
- *  Author(s) : Adrien Béraud <adrien.beraud@savoirfairelinux.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
- #pragma once
+// Copyright (c) 2014-2026 Savoir-faire Linux Inc.
+// SPDX-License-Identifier: MIT
+#pragma once
 
 #include "infohash.h"
 #include "sockaddr.h"
 #include "net.h"
 
+#include <algorithm>
 #include <map>
+#include <string_view>
+
+using namespace std::literals;
 
 namespace dht {
 namespace net {
 
-static const std::string KEY_Y {"y"};
-static const std::string KEY_R {"r"};
-static const std::string KEY_U {"u"};
-static const std::string KEY_E {"e"};
-static const std::string KEY_V {"p"};
-static const std::string KEY_TID {"t"};
-static const std::string KEY_UA {"v"};
-static const std::string KEY_NETID {"n"};
-static const std::string KEY_ISCLIENT {"s"};
-static const std::string KEY_Q {"q"};
-static const std::string KEY_A {"a"};
+static constexpr auto KEY_Y = "y"sv;
+static constexpr auto KEY_R = "r"sv;
+static constexpr auto KEY_U = "u"sv;
+static constexpr auto KEY_E = "e"sv;
+static constexpr auto KEY_V = "p"sv;
+static constexpr auto KEY_TID = "t"sv;
+static constexpr auto KEY_UA = "v"sv;
+static constexpr auto KEY_NETID = "n"sv;
+static constexpr auto KEY_ISCLIENT = "s"sv;
+static constexpr auto KEY_Q = "q"sv;
+static constexpr auto KEY_A = "a"sv;
 
-static const std::string KEY_REQ_SID {"sid"};
-static const std::string KEY_REQ_ID {"id"};
-static const std::string KEY_REQ_H {"h"};
-static const std::string KEY_REQ_TARGET {"target"};
-static const std::string KEY_REQ_QUERY {"q"};
-static const std::string KEY_REQ_TOKEN {"token"};
-static const std::string KEY_REQ_VALUE_ID {"vid"};
-static const std::string KEY_REQ_NODES4 {"n4"};
-static const std::string KEY_REQ_NODES6 {"n6"};
-static const std::string KEY_REQ_CREATION {"c"};
-static const std::string KEY_REQ_ADDRESS {"sa"};
-static const std::string KEY_REQ_VALUES {"values"};
-static const std::string KEY_REQ_EXPIRED {"exp"};
-static const std::string KEY_REQ_REFRESHED {"re"};
-static const std::string KEY_REQ_FIELDS {"fileds"};
-static const std::string KEY_REQ_WANT {"w"};
-static const std::string KEY_VERSION {"ve"};
+static constexpr auto KEY_REQ_SID = "sid"sv;
+static constexpr auto KEY_REQ_ID = "id"sv;
+static constexpr auto KEY_REQ_H = "h"sv;
+static constexpr auto KEY_REQ_TARGET = "target"sv;
+static constexpr auto KEY_REQ_QUERY = "q"sv;
+static constexpr auto KEY_REQ_TOKEN = "token"sv;
+static constexpr auto KEY_REQ_VALUE_ID = "vid"sv;
+static constexpr auto KEY_REQ_NODES4 = "n4"sv;
+static constexpr auto KEY_REQ_NODES6 = "n6"sv;
+static constexpr auto KEY_REQ_CREATION = "c"sv;
+static constexpr auto KEY_REQ_ADDRESS = "sa"sv;
+static constexpr auto KEY_REQ_VALUES = "values"sv;
+static constexpr auto KEY_REQ_EXPIRED = "exp"sv;
+static constexpr auto KEY_REQ_REFRESHED = "re"sv;
+static constexpr auto KEY_REQ_FIELDS = "fileds"sv;
+static constexpr auto KEY_REQ_WANT = "w"sv;
+static constexpr auto KEY_VERSION = "ve"sv;
 
-static const std::string QUERY_PING {"ping"};
-static const std::string QUERY_FIND {"find"};
-static const std::string QUERY_GET {"get"};
-static const std::string QUERY_UPDATE {"update"};
-static const std::string QUERY_PUT {"put"};
-static const std::string QUERY_LISTEN {"listen"};
-static const std::string QUERY_REFRESH {"refresh"};
+static constexpr auto QUERY_PING = "ping"sv;
+static constexpr auto QUERY_FIND = "find"sv;
+static constexpr auto QUERY_GET = "get"sv;
+static constexpr auto QUERY_UPDATE = "update"sv;
+static constexpr auto QUERY_PUT = "put"sv;
+static constexpr auto QUERY_LISTEN = "listen"sv;
+static constexpr auto QUERY_REFRESH = "refresh"sv;
 
-Tid unpackTid(const msgpack::object& o) {
+Tid
+unpackTid(const msgpack::object& o)
+{
     switch (o.type) {
     case msgpack::type::POSITIVE_INTEGER:
         return o.as<Tid>();
-    default:
-        return ntohl(*reinterpret_cast<const uint32_t*>(o.as<std::array<char, 4>>().data()));
+    default: {
+        auto arr = o.as<std::array<char, 4>>();
+        uint32_t val;
+        std::memcpy(&val, arr.data(), sizeof(val));
+        return ntohl(val);
+    }
     }
 }
 
-struct ParsedMessage {
+struct ParsedMessage
+{
     MessageType type;
     /* Node ID of the sender */
     InfoHash id;
@@ -94,7 +90,7 @@ struct ParsedMessage {
     /* the value id (announce confirmation) */
     Value::Id value_id {0};
     /* time when value was first created */
-    time_point created { time_point::max() };
+    time_point created {time_point::max()};
     /* IPv4 nodes in response to a 'find' request */
     Blob nodes4_raw, nodes6_raw;
     std::vector<Sp<Node>> nodes4, nodes6;
@@ -104,9 +100,25 @@ struct ParsedMessage {
     std::vector<Value::Id> expired_values {};
     /* index for fields values */
     std::vector<Sp<FieldValueIndex>> fields;
-    /** When part of the message header: {index -> (total size, {})}
-     *  When part of partial value data: {index -> (offset, part_data)} */
-    std::map<unsigned, std::pair<unsigned, Blob>> value_parts;
+    /** Tracks partial value reassembly for fragmented messages.
+     *  Populated from message header with total expected sizes. */
+    struct PartialValue
+    {
+        size_t total_size {0};
+        size_t received_bytes {0};
+        std::map<size_t, Blob> fragments {}; // offset -> fragment data
+        bool isComplete() const { return total_size > 0 && received_bytes == total_size; }
+        Blob reassemble() const
+        {
+            Blob result(total_size);
+            for (const auto& [offset, data] : fragments)
+                std::copy(data.begin(), data.end(), result.begin() + offset);
+            return result;
+        }
+    };
+    std::map<unsigned, PartialValue> value_parts;
+    /** When part of partial value data: {index -> (offset, part_data)} */
+    std::map<unsigned, std::pair<size_t, Blob>> fragment_parts;
     /* query describing a filter to apply on values. */
     Query query;
     /* states if ipv4 or ipv6 request */
@@ -127,20 +139,32 @@ bool
 ParsedMessage::append(const ParsedMessage& block)
 {
     bool ret(false);
-    for (const auto& ve : block.value_parts) {
-        auto part_val = value_parts.find(ve.first);
-        if (part_val == value_parts.end()
-            || part_val->second.second.size() >= part_val->second.first)
+    for (const auto& [index, fragment] : block.fragment_parts) {
+        auto part_it = value_parts.find(index);
+        if (part_it == value_parts.end())
             continue;
-        // TODO: handle out-of-order packets
-        if (ve.second.first != part_val->second.second.size()) {
-            //std::cout << "skipping out-of-order packet" << std::endl;
+        auto& pv = part_it->second;
+        if (pv.isComplete())
             continue;
+        auto offset = fragment.first;
+        const auto& data = fragment.second;
+        if (data.empty() || offset > pv.total_size || data.size() > pv.total_size - offset)
+            continue;
+        // Check for overlap with existing fragments
+        auto it = pv.fragments.lower_bound(offset);
+        if (it != pv.fragments.end()) {
+            auto distance = it->first - offset;
+            if (distance < data.size())
+                continue;
         }
+        if (it != pv.fragments.begin()) {
+            auto prev = std::prev(it);
+            if (prev->second.size() > offset - prev->first)
+                continue;
+        }
+        pv.fragments.emplace(offset, data);
+        pv.received_bytes += data.size();
         ret = true;
-        part_val->second.second.insert(part_val->second.second.end(),
-                                       ve.second.second.begin(),
-                                       ve.second.second.end());
     }
     return ret;
 }
@@ -148,14 +172,14 @@ ParsedMessage::append(const ParsedMessage& block)
 bool
 ParsedMessage::complete()
 {
-    for (auto& e : value_parts) {
-        //std::cout << "part " << e.first << ": " << e.second.second.size() << "/" << e.second.first << std::endl;
-        if (e.second.first > e.second.second.size())
+    for (const auto& [index, pv] : value_parts) {
+        if (!pv.isComplete())
             return false;
     }
-    for (auto& e : value_parts) {
+    for (auto& [index, pv] : value_parts) {
+        auto assembled = pv.reassemble();
         msgpack::unpacked msg;
-        msgpack::unpack(msg, (const char*)e.second.second.data(), e.second.second.size());
+        msgpack::unpack(msg, (const char*) assembled.data(), assembled.size());
         values.emplace_back(std::make_shared<Value>(msg.get()));
     }
     return true;
@@ -164,23 +188,25 @@ ParsedMessage::complete()
 void
 ParsedMessage::msgpack_unpack(const msgpack::object& msg)
 {
-    if (msg.type != msgpack::type::MAP) throw msgpack::type_error();
+    if (msg.type != msgpack::type::MAP)
+        throw msgpack::type_error();
 
-    struct ParsedMsg {
+    struct ParsedMsg
+    {
         msgpack::object* y;
         msgpack::object* r;
         msgpack::object* u;
         msgpack::object* e;
         msgpack::object* v;
         msgpack::object* a;
-        std::string q;
+        std::string_view q;
     } parsed {};
 
     for (unsigned i = 0; i < msg.via.map.size; i++) {
         auto& o = msg.via.map.ptr[i];
         if (o.key.type != msgpack::type::STR)
             continue;
-        auto key = o.key.as<std::string>();
+        auto key = o.key.as<std::string_view>();
         if (key == KEY_Y)
             parsed.y = &o.val;
         else if (key == KEY_R)
@@ -200,7 +226,7 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
         else if (key == KEY_ISCLIENT)
             is_client = o.val.as<bool>();
         else if (key == KEY_Q)
-            parsed.q = o.val.as<std::string>();
+            parsed.q = o.val.as<std::string_view>();
         else if (key == KEY_A)
             parsed.a = &o.val;
     }
@@ -213,7 +239,7 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
         type = MessageType::ValueData;
     else if (parsed.u)
         type = MessageType::ValueUpdate;
-    else if (parsed.y and parsed.y->as<std::string>() != "q")
+    else if (parsed.y and parsed.y->as<std::string_view>() != "q"sv)
         throw msgpack::type_error();
     else if (parsed.q == QUERY_PING)
         type = MessageType::Ping;
@@ -237,37 +263,46 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
             throw msgpack::type_error();
         for (size_t i = 0; i < parsed.v->via.map.size; ++i) {
             auto& vdat = parsed.v->via.map.ptr[i];
-            auto o = findMapValue(vdat.val, "o");
-            auto d = findMapValue(vdat.val, "d");
+            auto o = findMapValue(vdat.val, "o"sv);
+            auto d = findMapValue(vdat.val, "d"sv);
             if (not o or not d)
                 continue;
-            value_parts.emplace(vdat.key.as<unsigned>(), std::pair<size_t, Blob>(o->as<size_t>(), unpackBlob(*d)));
+            fragment_parts.emplace(vdat.key.as<unsigned>(), std::pair<size_t, Blob>(o->as<size_t>(), unpackBlob(*d)));
         }
         return;
     }
 
     if (!parsed.a && !parsed.r && !parsed.e && !parsed.u)
         throw msgpack::type_error();
-    auto& req = parsed.a ? *parsed.a : (parsed.r ? *parsed.r : (parsed.u ? *parsed.u : *parsed.e));
 
     if (parsed.e) {
-        if (parsed.e->type != msgpack::type::ARRAY)
+        if (parsed.e->type != msgpack::type::ARRAY or parsed.e->via.array.size < 1)
             throw msgpack::type_error();
         error_code = parsed.e->via.array.ptr[0].as<uint16_t>();
     }
 
-    struct ParsedReq {
+    /* An error-only message carries no request map. The error array must never
+       be reached through the map view of the msgpack object union, and a
+       request field that is not a map must be rejected rather than
+       reinterpreted. */
+    const msgpack::object* req = parsed.a ? parsed.a : (parsed.r ? parsed.r : parsed.u);
+    if (req and req->type != msgpack::type::MAP)
+        throw msgpack::type_error();
+
+    struct ParsedReq
+    {
         msgpack::object* values;
         msgpack::object* fields;
         msgpack::object* sa;
         msgpack::object* want;
     } parsedReq {};
 
-    for (unsigned i = 0; i < req.via.map.size; i++) {
-        auto& o = req.via.map.ptr[i];
+    const uint32_t req_size = req ? req->via.map.size : 0;
+    for (unsigned i = 0; i < req_size; i++) {
+        auto& o = req->via.map.ptr[i];
         if (o.key.type != msgpack::type::STR)
             continue;
-        auto key = o.key.as<std::string>();
+        auto key = o.key.as<std::string_view>();
         if (key == KEY_REQ_SID)
             socket_id = unpackTid(o.val);
         else if (key == KEY_REQ_ID)
@@ -312,12 +347,12 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
             addr.setFamily(AF_INET);
             auto& a = addr.getIPv4();
             a.sin_port = 0;
-            std::copy_n(parsedReq.sa->via.bin.ptr, l, (char*)&a.sin_addr);
+            std::copy_n(parsedReq.sa->via.bin.ptr, l, (char*) &a.sin_addr);
         } else if (l == sizeof(in6_addr)) {
             addr.setFamily(AF_INET6);
             auto& a = addr.getIPv6();
             a.sin6_port = 0;
-            std::copy_n(parsedReq.sa->via.bin.ptr, l, (char*)&a.sin6_addr);
+            std::copy_n(parsedReq.sa->via.bin.ptr, l, (char*) &a.sin6_addr);
         }
     } else
         addr = {};
@@ -331,28 +366,31 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
                 // Skip oversize values with a small margin for header overhead
                 if (packed_v.via.u64 > MAX_VALUE_SIZE + 32)
                     continue;
-                value_parts.emplace(i, std::make_pair(packed_v.via.u64, Blob{}));
+                value_parts[i].total_size = packed_v.via.u64;
             } else {
                 try {
                     values.emplace_back(std::make_shared<Value>(parsedReq.values->via.array.ptr[i]));
                 } catch (const std::exception& e) {
-                     //DHT_LOG_WARN("Error reading value: %s", e.what());
+                    // DHT_LOG_WARN("Error reading value: %s", e.what());
                 }
             }
         }
     } else if (parsedReq.fields) {
-        if (auto rfields = findMapValue(*parsedReq.fields, "f")) {
+        if (auto rfields = findMapValue(*parsedReq.fields, "f"sv)) {
             auto vfields = rfields->as<std::set<Value::Field>>();
-            if (auto rvalues = findMapValue(*parsedReq.fields, "v")) {
+            if (vfields.empty())
+                throw msgpack::type_error();
+            if (auto rvalues = findMapValue(*parsedReq.fields, "v"sv)) {
                 if (rvalues->type != msgpack::type::ARRAY)
                     throw msgpack::type_error();
                 size_t val_num = rvalues->via.array.size / vfields.size();
                 for (size_t i = 0; i < val_num; ++i) {
                     try {
                         auto v = std::make_shared<FieldValueIndex>();
-                        v->msgpack_unpack_fields(vfields, *rvalues, i*vfields.size());
+                        v->msgpack_unpack_fields(vfields, *rvalues, i * vfields.size());
                         fields.emplace_back(std::move(v));
-                    } catch (const std::exception& e) { }
+                    } catch (const std::exception& e) {
+                    }
                 }
             }
         } else {
@@ -364,15 +402,16 @@ ParsedMessage::msgpack_unpack(const msgpack::object& msg)
         if (parsedReq.want->type != msgpack::type::ARRAY)
             throw msgpack::type_error();
         want = 0;
-        for (unsigned i=0; i<parsedReq.want->via.array.size; i++) {
+        for (unsigned i = 0; i < parsedReq.want->via.array.size; i++) {
             auto& val = parsedReq.want->via.array.ptr[i];
             try {
                 auto w = val.as<sa_family_t>();
                 if (w == AF_INET)
                     want |= WANT4;
-                else if(w == AF_INET6)
+                else if (w == AF_INET6)
                     want |= WANT6;
-            } catch (const std::exception& e) {};
+            } catch (const std::exception& e) {
+            };
         }
     } else {
         want = -1;

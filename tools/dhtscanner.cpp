@@ -1,27 +1,12 @@
-/*
- *  Copyright (C) 2014-2022 Savoir-faire Linux Inc.
- *
- *  Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
+// Copyright (c) 2014-2026 Savoir-faire Linux Inc.
+// SPDX-License-Identifier: MIT
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
 #include "tools_common.h"
 #include <opendht/node.h>
+#include <fmt/format.h>
 
 extern "C" {
 #include <gnutls/gnutls.h>
@@ -30,18 +15,23 @@ extern "C" {
 #include <condition_variable>
 #include <mutex>
 
-using namespace dht;
+namespace dht {
+namespace tools {
 
-void print_usage() {
-    std::cout << "Usage: dhtscanner [-n network_id] [-p local_port] [-b bootstrap_host[:port]]" << std::endl << std::endl;
-    std::cout << "dhtscanner, a simple OpenDHT command line utility generating scan result the network." << std::endl;
-    std::cout << "Report bugs to: https://opendht.net" << std::endl;
+void
+print_usage()
+{
+    fmt::print("Usage: dhtscanner [-n network_id] [-p local_port] [-b bootstrap_host[:port]]\n"
+               "dhtscanner: a simple OpenDHT command line utility generating scan result the network.\n"
+               "Report bugs to: https://opendht.net\n");
 }
 
-struct snode_compare {
-    bool operator() (const std::shared_ptr<Node>& lhs, const std::shared_ptr<Node>& rhs) const{
-        return (lhs->id < rhs->id) ||
-            (lhs->id == rhs->id && lhs->getFamily() == AF_INET && rhs->getFamily() == AF_INET6);
+struct snode_compare
+{
+    bool operator()(const std::shared_ptr<Node>& lhs, const std::shared_ptr<Node>& rhs) const
+    {
+        return (lhs->id < rhs->id)
+               || (lhs->id == rhs->id && lhs->getFamily() == AF_INET && rhs->getFamily() == AF_INET6);
     }
 };
 
@@ -51,56 +41,83 @@ std::condition_variable cv;
 void
 step(DhtRunner& dht, std::atomic_uint& done, std::shared_ptr<NodeSet> all_nodes, dht::InfoHash cur_h, unsigned cur_depth)
 {
-    std::cout << "step at " << cur_h << ", depth " << cur_depth << std::endl;
+    fmt::print("step at {}, depth {}\n", cur_h.to_view(), cur_depth);
     done++;
-    dht.get(cur_h, [all_nodes](const std::vector<std::shared_ptr<Value>>& /*values*/) {
-        return true;
-    }, [&,all_nodes,cur_h,cur_depth](bool, const std::vector<std::shared_ptr<Node>>& nodes) {
-        all_nodes->insert(nodes.begin(), nodes.end());
-        NodeSet sbuck {nodes.begin(), nodes.end()};
-        if (not sbuck.empty()) {
-            unsigned bdepth = sbuck.size()==1 ? 0u : InfoHash::commonBits((*sbuck.begin())->id, (*sbuck.rbegin())->id);
-            unsigned target_depth = std::min(8u, bdepth+6u);
-            std::cout << cur_h << " : " << nodes.size() << " nodes; target is " << target_depth << " bits deep (cur " << cur_depth << ")" << std::endl;
-            for (unsigned b = cur_depth ; b < target_depth; b++) {
-                auto new_h = cur_h;
-                new_h.setBit(b, 1);
-                step(dht, done, all_nodes, new_h, b+1);
+    dht.get(
+        cur_h,
+        [](const std::vector<std::shared_ptr<Value>>& /*values*/) { return true; },
+        [&,
+         all_nodes,
+         cur_h,
+         cur_depth,
+         start_time = std::chrono::steady_clock::now()](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
+            auto took = std::chrono::steady_clock::now() - start_time;
+            if (not ok) {
+                fmt::print("Error while getting nodes for hash {} after {}\n",
+                           cur_h.to_view(),
+                           dht::print_duration(took));
             }
-        }
-        done--;
-        std::cout << done.load() << " operations left, " << all_nodes->size() << " nodes found." << std::endl;
-        cv.notify_one();
-    });
+            all_nodes->insert(nodes.begin(), nodes.end());
+            NodeSet sbuck {nodes.begin(), nodes.end()};
+            if (not sbuck.empty()) {
+                unsigned bdepth = sbuck.size() == 1 ? 0u
+                                                    : InfoHash::commonBits((*sbuck.begin())->id, (*sbuck.rbegin())->id);
+                unsigned target_depth = std::min(8u, bdepth + 6u);
+                fmt::print("Found {} nodes for hash {}, target depth is {}\n",
+                           nodes.size(),
+                           cur_h.to_view(),
+                           target_depth);
+                for (unsigned b = cur_depth; b < target_depth; b++) {
+                    auto new_h = cur_h;
+                    new_h.setBit(b, 1);
+                    step(dht, done, all_nodes, new_h, b + 1);
+                }
+            }
+            done--;
+            fmt::print("Step for {} ended after {}. Ongoing operations: {}. Total nodes: {}\n",
+                       cur_h.to_view(),
+                       dht::print_duration(took),
+                       done.load(),
+                       all_nodes->size());
+            cv.notify_one();
+        });
 }
 
+} // namespace tools
+} // namespace dht
+
 int
-main(int argc, char **argv)
+main(int argc, char** argv)
 {
+    using namespace dht::tools;
 #ifdef _MSC_VER
-    gnutls_global_init();
+    if (auto err = gnutls_global_init()) {
+        fmt::print(stderr, "Failed to initialize GnuTLS: {}\n", gnutls_strerror(err));
+        return EXIT_FAILURE;
+    }
 #endif
     auto params = parseArgs(argc, argv);
     if (params.help) {
         print_usage();
-        return 0;
+        return EXIT_SUCCESS;
     }
 
-    DhtRunner dht;
+    dht::DhtRunner dht;
     try {
-        auto dhtConf = getDhtConfig(params);
-        dht.run(params.port, dhtConf.first, std::move(dhtConf.second));
+        auto [config, context] = getDhtConfig(params);
+        config.dht_config.node_config.client_mode = true;
+        dht.run(params.port, config, std::move(context));
 
         if (not params.bootstrap.empty())
             dht.bootstrap(params.bootstrap);
 
         print_node_info(dht.getNodeInfo());
-        std::cout << "Scanning network..." << std::endl;
+        fmt::print("Scanning network {} on port {}\n", params.network, dht.getBoundPort());
         auto all_nodes = std::make_shared<NodeSet>();
 
         // Set hash to 1 because 0 is the null hash
         dht::InfoHash cur_h {};
-        cur_h.setBit(8*HASH_LEN-1, 1);
+        cur_h.setBit(8 * HASH_LEN - 1, 1);
 
         std::this_thread::sleep_for(std::chrono::seconds(2));
 
@@ -109,22 +126,20 @@ main(int argc, char **argv)
 
         {
             std::mutex m;
-            std::unique_lock<std::mutex> lk(m);
-            cv.wait(lk, [&](){
-                return done.load() == 0;
-            });
+            std::unique_lock lk(m);
+            cv.wait(lk, [&]() { return done.load() == 0; });
         }
 
-        std::cout << std::endl << "Scan ended: " << all_nodes->size() << " nodes found." << std::endl;
+        fmt::print("Scan ended: {} nodes found.\n", all_nodes->size());
         for (const auto& n : *all_nodes)
-            std::cout << "Node " << *n << std::endl;
-    } catch(const std::exception&e) {
-        std::cerr << std::endl <<  e.what() << std::endl;
+            fmt::print("Node {}: {}\n", n->id.to_view(), n->getAddrStr());
+    } catch (const std::exception& e) {
+        fmt::print(stderr, "\n{}\n", e.what());
     }
 
     dht.join();
 #ifdef _MSC_VER
     gnutls_global_deinit();
 #endif
-    return 0;
+    return EXIT_SUCCESS;
 }
