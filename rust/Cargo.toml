@@ -5,7 +5,6 @@ authors = ["Sébastien Blin <sebastien.blin@savoirfairelinux.com>", "Adrien Bera
 edition = "2024"
 description = "Rust bindings for OpenDHT"
 license = "MIT"
-license-file = "../LICENSE"
 repository = "https://github.com/savoirfairelinux/opendht"
 
 [features]
