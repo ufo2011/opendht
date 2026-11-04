@@ -1,75 +1,75 @@
-# OpenDHT Node.js Bindings
+# OpenDHT: a Distributed Hash Table
 
-Initial Node-API bindings using `node-addon-api` directly over the C++ library.
-Node.js 22.9 or later is required; the addon targets Node-API version 8.
+OpenDHT is a Kademlia-based distributed hash table for storing and retrieving
+small values over a peer-to-peer network without a central server. Common uses
+include peer discovery, service announcements, and decentralized applications.
 
-## Install
+The `opendht` npm package provides Node.js bindings to
+[OpenDHT](https://opendht.net), with promises, async iterators, and TypeScript
+declarations. It supports value subscriptions, signed and encrypted values, and
+direct or HTTP(S) proxy connections.
+
+## Get Started
+
+Install with Node.js 22.9 or later:
 
 ```sh
 npm install opendht
 ```
 
-## Build
+The package uses ES modules. Packaged binaries include OpenDHT and its non-system
+native dependencies; no compiler or separate OpenDHT installation is needed on
+supported platforms:
 
-Install the native dependencies described in [BUILD.md](../BUILD.md), plus Node.js,
-a C++17 compiler, and CMake 3.21 or later. Ninja is optional. Proxy-client support
-defaults to enabled and requires ASIO, llhttp, RESTinio, and expected-lite headers.
+| Platform | Binary baseline |
+|----------|-----------------|
+| Linux x64 | Ubuntu 24.04 / glibc 2.39 |
+| macOS ARM64 and x64 | macOS 15 |
+| Windows x64 | Windows Server 2022 / MSVC |
 
-```sh
-cd nodejs
-npm ci
-npm run build
-npm test
-npm run typecheck
-```
+Alpine/musl and other architectures are not currently bundled. Binaries target
+Node-API version 8, but still require a compatible OS and libc. For source builds
+or custom native options, see the
+[build and test guide](https://github.com/savoirfairelinux/opendht/blob/master/nodejs/BUILD.md).
 
-CMake.js builds OpenDHT from the parent source directory in `nodejs/build/native`.
-It does not change the repository's existing build directory. Tools, Python,
-peer discovery, documentation, and native tests default to disabled in this build.
-Native CMake options can be passed through, for example:
+`DhtRunner` manages a node, `hash()` turns an application key into a DHT key, and
+values carry a binary payload and metadata. `put()` publishes values, `get()`
+retrieves them, and `listen()` subscribes to updates and expiration events.
 
-```sh
-npm run build -- --CDOPENDHT_PEER_DISCOVERY=ON
-```
-
-For an existing build, change cached options directly with CMake, for example
-`cmake -S . -B build -DOPENDHT_PROXY_CLIENT=ON`, then rebuild. A custom build can
-disable proxy support with `-DOPENDHT_PROXY_CLIENT=OFF`; requesting a proxy then
-throws an explicit unsupported-build error.
-
-The loader checks local builds, then compatible Node-API binaries under `prebuilds/`.
-Set `OPENDHT_NODE_BINDING` to an absolute addon path to select an explicit build.
-Packaged binaries include OpenDHT and non-system native dependencies, so archive
-installation does not require a compiler or a system OpenDHT installation.
-
-## Usage
+Save this example as `hello.mjs` and run it with `node hello.mjs`. It starts a
+node on an OS-assigned port, bootstraps into the public network, publishes a
+value, and reads it back.
 
 ```js
 import { DhtRunner, hash } from 'opendht';
 
 async function main() {
-    const writer = new DhtRunner();
-    const reader = new DhtRunner();
+    const runner = new DhtRunner();
     try {
-        writer.run({ port: 0, ipv4: '127.0.0.1', ipv6: '::1' });
-        reader.run({ port: 0, ipv4: '127.0.0.1', ipv6: '::1' });
-        writer.bootstrap('127.0.0.1', reader.getBoundPort());
-        reader.bootstrap('127.0.0.1', writer.getBoundPort());
-        const key = hash('example');
-        const stored = await writer.put(key, Buffer.from('hello'), { id: 42n });
+        runner.run({ port: 0 });
+        runner.bootstrap('bootstrap.jami.net', 4222);
+        const key = hash('my-app/hello');
+        const stored = await runner.put(key, Buffer.from('Hello from Node.js!'));
         if (!stored) throw new Error('DHT put failed');
-        for await (const value of reader.get(key)) {
+        for await (const value of runner.get(key)) {
             console.log(value.id, value.data.toString());
         }
     } finally {
-        await Promise.all([writer.close(), reader.close()]);
+        await runner.close();
     }
 }
 
-main().catch(console.error);
+main().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});
 ```
 
-## API
+A bootstrap server supplies initial peers. Applications can use public bootstrap
+servers or known peers on a private network. Values expire, and their availability
+depends on participating nodes; the DHT does not provide durable storage guarantees.
+
+## Working With Values
 
 - `hash(string | Uint8Array)` returns a SHA-1 hash as a 40-character hex string.
   All get/put/listen keys must be hex hashes, not unhashed application keys.
@@ -116,7 +116,7 @@ The binding does not cap the callback queue, accumulated `getAll()` results, or
 iterator buffers. Slow iterator consumers can accumulate values without
 backpressure. Queued callbacks retain their native values until delivery or cleanup.
 
-## Async Iteration
+## Subscriptions and Async Iteration
 
 `get()` and callback-free `listen()` start immediately and return iterators with
 `next()`, `return()`, `throw()`, `cancel()`, and `Symbol.asyncDispose`.
@@ -137,7 +137,7 @@ for await (const { value, expired } of runner.listen(hash('updates'))) {
 }
 ```
 
-## Proxy Configuration
+## Using a Proxy
 
 Pass the URL of an OpenDHT HTTP(S) proxy at startup:
 
@@ -154,7 +154,7 @@ The node does not bind UDP sockets in this mode; `port`, `ipv4`, `ipv6`, and
 for direct networking. Proxy settings are startup-only; create a new runner to
 change transports or servers. Packaged binaries include proxy-client support.
 
-## Crypto
+## Signed and Encrypted Values
 
 `PrivateKey.generate(options)` and `Identity.generate(name, options)` return
 promises and generate keys off the JS thread. Options accept `algorithm: 'ec'`
@@ -197,47 +197,12 @@ mismatched identities, and unsupported encryption keys raise JS exceptions.
 Only generation is asynchronous; import/export/sign/encrypt/decrypt are
 synchronous and should be used from worker threads for large workloads.
 
-## Packaging And CI
-
-From a successful Release build:
-
-```sh
-npm run package
-npm run test:package
-```
-
-`bundle` copies the addon into `prebuilds/<platform>-<arch>/`, gathers its runtime
-dependencies, rewrites native loader paths, and copies dependency license
-notices. macOS needs `dylibbundler` and Apple developer tools; Linux needs
-`patchelf` and Debian/Ubuntu dependency copyright files. Windows uses the vcpkg
-installed tree (`VCPKG_INSTALLED_DIR`, `VCPKG_DEFAULT_TRIPLET`) and MSVC tools.
-`OPENDHT_LIBRARY_PATH` adds native library search directories when bundling.
-An explicit addon path may be passed to `npm run bundle -- /absolute/addon.node`.
-Bundling replaces only the current platform's generated prebuild directory.
-
-`test:package` creates an npm archive, installs it in a temporary consumer with
-install scripts disabled and no dev dependencies, forces prebuild-only loading,
-and runs the full runtime suite. Pass an archive file or a directory containing
-one archive to test it directly, for example `npm run test:package -- dist`.
-Only runtime JS, declarations, the example's TypeScript source, documentation,
-and prebuilds are included in the archive. `prepack` compiles the example, so
-archive creation needs the development dependencies; archive installation does not.
-
-The [Node.js package workflow](../.github/workflows/nodejs-package.yml) builds:
-
-| Target | Build Baseline |
-| --- | --- |
-| Linux x64 | Ubuntu 24.04 / glibc 2.39 (Noble dependency image) |
-| macOS ARM64 and x64 | macOS 15 |
-| Windows x64 | Windows Server 2022 / MSVC |
-
-CI combines platform prebuilds into one npm archive and verifies that archive on
-Node 22, 24, and 26 on each platform, including Ubuntu 24.04 and 26.04. Branch
-pushes, pull requests, and manual runs build and test without publishing.
-musl/Alpine and other architectures are not currently built. Node-API stability
-does not remove OS/libc or native dependency compatibility requirements. Review
-the included dependency licenses and source-distribution obligations before
-redistributing binaries.
-
 Query filters, AbortSignal support, certificate trust-store validation, CA
 issuance controls, and runtime proxy switching remain future work.
+
+## Learn More
+
+- [TypeScript API declarations](https://github.com/savoirfairelinux/opendht/blob/master/nodejs/index.d.ts)
+- [Interactive node example](https://github.com/savoirfairelinux/opendht/blob/master/nodejs/examples/dhtnode.ts)
+- [Build, test, and packaging guide](https://github.com/savoirfairelinux/opendht/blob/master/nodejs/BUILD.md)
+- [OpenDHT project and issue tracker](https://github.com/savoirfairelinux/opendht)
