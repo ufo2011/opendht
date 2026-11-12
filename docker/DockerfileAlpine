@@ -25,6 +25,7 @@ FROM alpine:3.24 AS install
 COPY --from=build /install /
 RUN apk add --no-cache \
         libstdc++ \
+        simdutf \
         gnutls \
         nettle \
         openssl \
