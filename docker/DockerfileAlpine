@@ -8,9 +8,9 @@ RUN mkdir /install
 ENV DESTDIR=/install
 
 RUN cd opendht && mkdir build && cd build \
-	&& cmake .. -DCMAKE_INSTALL_PREFIX=/usr \
+	&& cmake .. -GNinja -DCMAKE_INSTALL_PREFIX=/usr \
                 -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=On \
-                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=Off \
                 -DOPENDHT_C=On \
                 -DOPENDHT_PEER_DISCOVERY=On \
@@ -19,13 +19,12 @@ RUN cd opendht && mkdir build && cd build \
                 -DOPENDHT_PROXY_SERVER=On \
                 -DOPENDHT_PROXY_CLIENT=On \
                 -DOPENDHT_SYSTEMD=On \
-	&& make -j8 && make install
+	&& ninja && ninja install
 
 FROM alpine:3.24 AS install
 COPY --from=build /install /
 RUN apk add --no-cache \
         libstdc++ \
-        simdutf \
         gnutls \
         nettle \
         openssl \
@@ -33,6 +32,7 @@ RUN apk add --no-cache \
         jsoncpp \
         llhttp \
         fmt \
+        simdutf \
         readline \
         ncurses
 CMD ["dhtnode", "-b", "bootstrap.jami.net", "-p", "4222", "--proxyserver", "8080"]
